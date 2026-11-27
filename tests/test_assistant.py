@@ -262,11 +262,35 @@ async def test_echo_cannot_answer_a_permission_question(tmp_path):
     h = Harness(tmp_path)
     h.player.realtime = True
     h.cfg.claude_code.ask_timeout_s = 0.5
-    task = asyncio.create_task(h.assistant.confirm(h.code, "Выполнить команду: удалить сборку?", "rm -rf build"))
+    task = asyncio.create_task(h.assistant.confirm(h.code, "Удалить?", "rm -rf build"))
     await asyncio.sleep(0.02)
-    h.speaker.say("Скажи «да» или «нет».")  # our hint, heard back by the microphone
-    await asyncio.sleep(0.02)
+    hint = "Скажи «да» или «нет»."
+    h.speaker.say(hint)
+    while h.speaker.last_spoken != hint:  # wait until the hint is actually playing
+        await asyncio.sleep(0.01)
+    # the microphone hears our own hint: neither the whole phrase nor its last word answers
     await h.assistant.on_transcript("скажи да или нет")
-    await h.assistant.on_transcript("нет")  # also while we speak → not an answer
-    assert await task is None  # nothing was accepted as an answer; timed out
+    await h.assistant.on_transcript("нет")
+    assert await task is None  # nothing was accepted; the question timed out
+    await h.close()
+
+
+async def test_user_can_answer_over_the_question(tmp_path):
+    h = Harness(tmp_path)
+    h.player.realtime = True
+    task = asyncio.create_task(h.assistant.confirm(h.code, "Выполнить команду: удалить сборку?", "rm -rf build"))
+    await asyncio.sleep(0.05)
+    await h.assistant.on_transcript("нет")  # said while the question is still being read
+    assert await asyncio.wait_for(task, 3) == it.NO
+    await h.close()
+
+
+async def test_quick_yes_right_after_the_question(tmp_path):
+    h = Harness(tmp_path)
+    h.player.realtime = True
+    task = asyncio.create_task(h.assistant.confirm(h.code, "Создать файл привет.txt?", "привет.txt"))
+    await asyncio.sleep(0.05)
+    # the user answers while the question's echo tail is still "in the air"
+    await h.assistant.on_transcript("Да, разрешаю.", started=h.clock())
+    assert await asyncio.wait_for(task, 3) == it.YES
     await h.close()

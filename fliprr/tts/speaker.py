@@ -109,6 +109,10 @@ class Speaker:
             return True
         return any(s - 0.3 <= started <= e + ECHO_TAIL_S for s, e in self._played)
 
+    @property
+    def last_spoken(self) -> str:
+        return self.recent[-1][1] if self.recent else ""
+
     def echo_ratio(self, text: str) -> float:
         """How much of ``text`` sounds like what we said in the last minute (0…1)."""
         now = self.clock()

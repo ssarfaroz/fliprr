@@ -277,6 +277,12 @@ _YES_WORDS = {
 _ALWAYS_PHRASES = ("всегда", "always", "больше не спрашивай", "не спрашивай больше", "dont ask again", "don t ask again")
 
 
+def starts_with_answer(text: str) -> bool:
+    """«Да, …», «Нет, …», «Всегда» — the first word itself is the answer."""
+    ws = normalize(text).split()
+    return bool(ws) and (ws[0] in _YES_WORDS or ws[0] in _NO_WORDS or ws[0] in ("всегда", "always"))
+
+
 def parse_yes_no(text: str) -> str | None:
     norm = normalize(text)
     ws = norm.split()

@@ -208,7 +208,12 @@ class Assistant:
                 if kind and ratio < 0.9:
                     await self._stop(self._barge_target(text), mute_only=kind == it.MUTE, announce=False)
                     return
-                if wake is None or wake.index > 0 or ratio >= 0.4:
+                # A quick «да» right after the question is fine; our own words aren't
+                # (the hint «Скажи “да” или “нет”» must not answer itself).
+                first = (words(text) or [""])[0]
+                quick_answer = (self._confirm is not None and ratio < 0.6 and it.starts_with_answer(text)
+                                and first not in words(self.speaker.last_spoken))
+                if not quick_answer and (wake is None or wake.index > 0 or ratio >= 0.4):
                     self.ui.debug(f"ignored (while speaking): {text}")
                     return
 

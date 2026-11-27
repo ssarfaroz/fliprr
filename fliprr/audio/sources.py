@@ -134,9 +134,9 @@ class FileSource:
                 deadline = time.monotonic() + self.ready_timeout_s
                 settle = 0
                 while not self._closed.is_set() and time.monotonic() < deadline:
-                    # require the condition to hold for a moment (avoid races)
+                    # require the condition to hold for ~0.5 s: a human reaction, and no races
                     settle = settle + 1 if self.ready() else 0
-                    if settle >= 10:
+                    if settle >= 25:
                         break
                     yield silence
                     time.sleep(0.02)
