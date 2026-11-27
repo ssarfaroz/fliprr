@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fliprr"
+version = "0.1.0"
+description = "Hands-free voice control for Claude Code and Claude: say «Клод Код, …» from across the room."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "claude-agent-sdk>=0.2.180",
+    "faster-whisper>=1.1",
+    "onnxruntime>=1.17",
+    "av>=12",
+    "numpy>=1.24",
+    "sounddevice>=0.4.6",
+    "edge-tts>=7.0",
+    "tomli>=2; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+piper = ["piper-tts>=1.3"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+fliprr = "fliprr.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fliprr*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
