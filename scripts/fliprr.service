@@ -1,0 +1,16 @@
+# systemd user service (Linux): start fliprr when you log in.
+#   mkdir -p ~/.config/systemd/user && cp scripts/fliprr.service ~/.config/systemd/user/
+#   (edit ExecStart if fliprr is not in ~/fliprr)
+#   systemctl --user enable --now fliprr
+#   journalctl --user -u fliprr -f      # see what it hears and says
+[Unit]
+Description=fliprr — voice control for Claude Code
+After=pipewire.service pulseaudio.service
+
+[Service]
+ExecStart=%h/fliprr/.venv/bin/fliprr --no-color
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
