@@ -7,7 +7,7 @@ import time
 
 import numpy as np
 
-from fliprr.audio.devices import import_sounddevice, resolve_device
+from fliprr.audio.devices import AudioUnavailable, import_sounddevice, resolve_device
 from fliprr.audio.resample import resample
 
 
@@ -17,7 +17,10 @@ class AudioPlayer:
     def __init__(self, device: str = "") -> None:
         self._sd = import_sounddevice()
         self.device = resolve_device(self._sd, device, "output")
-        info = self._sd.query_devices(self.device, "output")
+        try:
+            info = self._sd.query_devices(self.device, "output")
+        except Exception as e:  # noqa: BLE001 — sounddevice.PortAudioError
+            raise AudioUnavailable(f"no speakers found ({e}); see `fliprr devices`") from e
         self.name = info["name"]
         self.rate = int(info["default_samplerate"])
         self._channels = 1

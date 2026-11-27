@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from fliprr.audio.devices import import_sounddevice, resolve_device
+from fliprr.audio.devices import AudioUnavailable, import_sounddevice, resolve_device
 from fliprr.audio.resample import Resampler, resample
 from fliprr.audio.vad import FRAME, SAMPLE_RATE
 
@@ -23,7 +23,10 @@ class MicrophoneSource:
     def __init__(self, device: str = "", gain: float = 1.0) -> None:
         sd = import_sounddevice()
         self.device = resolve_device(sd, device, "input")
-        info = sd.query_devices(self.device, "input")
+        try:
+            info = sd.query_devices(self.device, "input")
+        except Exception as e:  # noqa: BLE001 — sounddevice.PortAudioError
+            raise AudioUnavailable(f"no microphone found ({e}); see `fliprr devices`") from e
         self.name = info["name"]
         try:
             sd.check_input_settings(device=self.device, channels=1, samplerate=SAMPLE_RATE, dtype="float32")

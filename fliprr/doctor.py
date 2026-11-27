@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
+from fliprr import claude_cli
 from fliprr.config import Config
 from fliprr.ui import Console
 
@@ -85,32 +84,25 @@ def run_doctor(cfg: Config, ui: Console, config_path: Path | None) -> int:
     if engines:
         ok("text-to-speech: " + ", ".join(e.name for e in engines))
 
-    # Claude Code CLI
-    cli = cfg.claude_code.cli_path or _bundled_cli() or shutil.which("claude")
+    # Claude Code CLI and login
+    cli = claude_cli.find_cli(cfg)
     if not cli:
         bad("Claude Code CLI not found", "pip install claude-agent-sdk (bundles it) or install Claude Code")
     else:
         try:
-            out = subprocess.run([cli, "--version"], capture_output=True, text=True, timeout=60)
-            ok(f"Claude Code {out.stdout.strip() or out.stderr.strip()} ({cli})")
+            ok(f"Claude Code {claude_cli.version(cli)} ({cli})")
         except Exception as e:  # noqa: BLE001
             bad(f"Claude Code CLI failed to run: {e}")
-        ui.info("  login: the first request tells you if Claude Code needs `claude` → /login")
+        status = claude_cli.auth_status(cli)
+        if status is None:
+            ui.warn("couldn't check the Claude login; the first request will tell")
+        elif status.get("loggedIn"):
+            ok(f"logged in to Claude ({status.get('authMethod', '?')})")
+        else:
+            bad("not logged in to Claude", "run: fliprr login")
 
     if problems:
         ui.warn(f"{problems} problem(s) found")
         return 1
     ok("all good — run `fliprr`")
     return 0
-
-
-def _bundled_cli() -> str | None:
-    try:
-        import claude_agent_sdk
-    except ImportError:
-        return None
-    base = Path(claude_agent_sdk.__file__).parent / "_bundled"
-    for name in ("claude.exe", "claude"):
-        if (base / name).is_file():
-            return str(base / name)
-    return None

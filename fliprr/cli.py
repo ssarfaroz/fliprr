@@ -23,11 +23,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-v", "--verbose", action="store_true", help="show debug output")
     parser.add_argument("--no-color", action="store_true")
     parser.add_argument("--version", action="version", version=f"fliprr {__version__}")
+    parser.add_argument("--project", help="folder for Claude Code (overrides config)")
+    parser.add_argument("--keyboard", action="store_true", help="also accept typed requests")
     sub = parser.add_subparsers(dest="command")
 
     p = sub.add_parser("run", help="start listening (default)")
-    p.add_argument("--project", help="folder for Claude Code (overrides config)")
-    p.add_argument("--keyboard", action="store_true", help="also accept typed requests")
+    # SUPPRESS: don't overwrite values given before the subcommand
+    p.add_argument("--project", default=argparse.SUPPRESS, help="folder for Claude Code (overrides config)")
+    p.add_argument("--keyboard", action="store_true", default=argparse.SUPPRESS, help="also accept typed requests")
     sub.add_parser("devices", help="list microphones and speakers")
     p = sub.add_parser("test-mic", help="check the microphone, levels and recognition")
     p.add_argument("--seconds", type=float, default=20.0)
@@ -40,11 +43,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--agents", choices=["claude", "echo"], default="echo",
                    help="echo = don't call Claude, just repeat the request")
     p.add_argument("--sound", action="store_true", help="play speech through the speakers")
-    p.add_argument("--project", help="folder for Claude Code")
+    p.add_argument("--tts", action="store_true", help="synthesize speech without playing it (realistic timing)")
+    p.add_argument("--project", default=argparse.SUPPRESS, help="folder for Claude Code")
     p = sub.add_parser("init", help="create a config file")
     p.add_argument("--path", help=f"where to write it (default: {app_dir() / 'config.toml'})")
     p.add_argument("--force", action="store_true", help="overwrite an existing file")
     sub.add_parser("doctor", help="check that everything is installed and working")
+    sub.add_parser("login", help="sign in to Claude (same login as Claude Code)")
 
     args = parser.parse_args(argv)
     ui = Console(color=False if args.no_color else None, verbose=args.verbose)
@@ -80,6 +85,14 @@ def main(argv: list[str] | None = None) -> int:
             from fliprr.doctor import run_doctor
 
             return run_doctor(cfg, ui, path)
+        if command == "login":
+            from fliprr import claude_cli
+
+            cli = claude_cli.find_cli(cfg)
+            if not cli:
+                ui.error("Claude Code CLI not found")
+                return 1
+            return claude_cli.login(cli)
     except KeyboardInterrupt:
         ui.state("пока!" if cfg.language == "ru" else "bye!")
         return 0
@@ -114,12 +127,12 @@ def cmd_simulate(args: argparse.Namespace, cfg: Config, ui: Console) -> int:
     from fliprr.audio.player import NullPlayer
     from fliprr.audio.sources import FileSource
 
-    player = None if args.sound else NullPlayer()
+    player = None if args.sound else NullPlayer(realtime=args.tts)
 
     def source(assistant):  # noqa: ANN001, ANN202
         return FileSource(args.files, ready=lambda: assistant.idle or assistant.waiting_for_answer)
 
-    if not args.sound and cfg.tts.engine != "none":
+    if not (args.sound or args.tts):
         cfg.tts.engine, cfg.tts.fallback = "none", "none"
     asyncio.run(run_assistant(cfg, ui, source, player=player, agents=args.agents, greet=False,
                               exit_when_done=True, restart_source=False))

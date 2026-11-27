@@ -132,6 +132,7 @@ async def confirm_with(h, *answers, timeout=2.0):
     task = asyncio.create_task(h.assistant.confirm(h.code, "Выполнить команду: тесты?", "npm test"))
     await asyncio.sleep(0.05)
     for answer in answers:
+        h.clock.now += 2.0  # the answer comes after the question
         await h.assistant.on_transcript(answer)
     return await asyncio.wait_for(task, timeout + 2)
 
@@ -204,3 +205,68 @@ async def test_barge_in_inside_echo(h):
     assert not h.speaker.speaking or h.speaker._items.empty()
     await h.settle()
     assert not h.speaker.speaking
+
+
+async def test_barge_in_probe_while_speaking(tmp_path):
+    import numpy as np
+
+    h = Harness(tmp_path)
+
+    class ProbeTranscriber:
+        prompt = ""
+        calls = 0
+
+        def transcribe(self, audio, fast=False):
+            from fliprr.stt.base import Transcript
+
+            ProbeTranscriber.calls += 1
+            assert fast  # probes use the quick decoding settings
+            return Transcript(text="и вот эта функция Клод стоп возвращает список")
+
+    h.assistant.transcriber = ProbeTranscriber()
+    h.assistant.probe_audio = lambda seconds: np.zeros(int(seconds * 16000), np.float32)
+    h.player.realtime = True
+    for _ in range(3):
+        h.speaker.say("Это очень длинный ответ, который никто не хочет слушать до конца.")
+    await asyncio.sleep(0.05)
+    assert h.speaker.speaking
+    await h.assistant._maybe_probe()
+    assert ProbeTranscriber.calls == 1
+    await h.settle()
+    assert not h.speaker.speaking
+    await h.assistant._maybe_probe()  # nothing is being said: no probe
+    assert ProbeTranscriber.calls == 1
+    await h.close()
+
+
+async def test_while_speaking_only_a_direct_call_counts(tmp_path):
+    h = Harness(tmp_path)
+    await h.hear("Клод, придумай имя для кота")  # opens a follow-up window afterwards
+    h.player.realtime = True
+    h.speaker.say("Например, Барсик. А ещё можно назвать его Пушок или Мурзик, это классика.")
+    await asyncio.sleep(0.05)
+    assert h.speaker.speaking
+    # garbled echo of our own answer: no follow-up, no request
+    await h.assistant.on_transcript("например барсук а ещё мурзилка")
+    # «Я Клод, …» from our own speech: the name is not at the start → ignored
+    await h.assistant.on_transcript("Я Клод, ассистент от Антропик")
+    assert h.chat.prompts == ["придумай имя для кота"]
+    # a direct call interrupts us
+    await h.assistant.on_transcript("Клод Код, запусти сборку")
+    await h.settle()
+    assert h.code.prompts == ["запусти сборку"]
+    await h.close()
+
+
+async def test_echo_cannot_answer_a_permission_question(tmp_path):
+    h = Harness(tmp_path)
+    h.player.realtime = True
+    h.cfg.claude_code.ask_timeout_s = 0.5
+    task = asyncio.create_task(h.assistant.confirm(h.code, "Выполнить команду: удалить сборку?", "rm -rf build"))
+    await asyncio.sleep(0.02)
+    h.speaker.say("Скажи «да» или «нет».")  # our hint, heard back by the microphone
+    await asyncio.sleep(0.02)
+    await h.assistant.on_transcript("скажи да или нет")
+    await h.assistant.on_transcript("нет")  # also while we speak → not an answer
+    assert await task is None  # nothing was accepted as an answer; timed out
+    await h.close()

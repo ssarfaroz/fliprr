@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -77,6 +78,8 @@ async def run_assistant(
     assistant.attach_agents(*build_agents(cfg, assistant, store, ui, agents))
     assistant._loop = asyncio.get_running_loop()
 
+    errors: list[BaseException] = []
+
     def new_listener() -> Listener:
         source = make_source(assistant)
         segmenter = Segmenter(
@@ -86,12 +89,11 @@ async def run_assistant(
         )
         vad.reset()
         listener = Listener(source, vad, segmenter, assistant.post_utterance, playing=player.playing,
-                            barge_in=cfg.audio.barge_in, on_error=lambda e: errors.append(e))
+                            barge_in=cfg.audio.barge_in, on_error=errors.append)
         assistant.probe_audio = listener.recent_audio
         ui.state(f"🎤 {getattr(source, 'name', 'audio')}")
         return listener
 
-    errors: list[BaseException] = []
     listener = new_listener()
     run_task = asyncio.create_task(assistant.run(greet=greet))
     listener.start()
@@ -145,9 +147,15 @@ async def _wait_idle(assistant: Assistant, settle_s: float = 1.5) -> None:
 
 async def _keyboard(assistant: Assistant) -> None:
     """Typed lines are handled like speech (handy at the desk)."""
-    while True:
-        line = await asyncio.to_thread(sys.stdin.readline)
-        if not line:
-            return
+    loop = asyncio.get_running_loop()
+    lines: asyncio.Queue[str | None] = asyncio.Queue()
+
+    def read() -> None:  # a daemon thread: a pending readline() must not block exit
+        for line in sys.stdin:
+            loop.call_soon_threadsafe(lines.put_nowait, line)
+        loop.call_soon_threadsafe(lines.put_nowait, None)
+
+    threading.Thread(target=read, name="fliprr-keyboard", daemon=True).start()
+    while (line := await lines.get()) is not None:
         if line.strip():
             await assistant.on_transcript(line.strip(), typed=True)

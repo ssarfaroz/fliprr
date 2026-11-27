@@ -38,6 +38,7 @@ class WakeMatch:
     target: str  # CODE or CHAT
     command: str  # text after the wake phrase, original spelling
     wake_text: str  # the matched wake phrase as heard
+    index: int = 0  # word position of the wake phrase («Слушай, Клод» → 1)
 
     @property
     def wake_only(self) -> bool:
@@ -111,4 +112,4 @@ class WakeMatcher:
     def _make(target: str, text: str, spans: list[tuple[str, int, int]], i: int, j: int) -> WakeMatch:
         start, end = spans[i][1], spans[j][2]
         command = text[end:].lstrip(_PUNCT).strip()
-        return WakeMatch(target=target, command=command, wake_text=text[start:end])
+        return WakeMatch(target=target, command=command, wake_text=text[start:end], index=i)

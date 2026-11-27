@@ -28,7 +28,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "confirm_timeout": "Не услышал ответа, отменяю это действие.",
         "denied": "Хорошо, не буду.",
         "error": "Ошибка: {error}",
-        "auth_error": "Claude Code не авторизован. Запусти claude в терминале один раз и войди в аккаунт.",
+        "auth_error": "Claude Code не авторизован. Выполни в терминале команду fliprr login.",
         "cli_error": "Не получилось запустить Claude Code. Подробности на экране.",
         "rate_limit": "Достигнут лимит использования Claude. Попробуй позже.",
         "billing_error": "Проблема с оплатой аккаунта Claude.",
@@ -38,8 +38,8 @@ _PHRASES: dict[str, dict[str, str]] = {
         "accept_edits_on": "Хорошо, правки файлов применяю без вопросов.",
         "accept_edits_off": "Хорошо, буду спрашивать разрешение.",
         "help": (
-            "Скажи «Клод Код» и задачу — я передам её Claude Code в проекте. "
-            "Скажи «Клод» и вопрос — отвечу как обычный Claude. "
+            "Чтобы дать задачу в проекте, скажи «Клод Код» и задачу. "
+            "Чтобы просто поговорить, скажи «Клод» и вопрос. "
             "После ответа можно продолжать без имени несколько секунд. "
             "Команды: стоп, замолчи, повтори, новая сессия, проект и название, "
             "открой чат и название, разрешай правки, спи и проснись."
@@ -87,7 +87,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "confirm_timeout": "No answer, so I'm skipping that action.",
         "denied": "OK, I won't.",
         "error": "Error: {error}",
-        "auth_error": "Claude Code is not logged in. Run claude in a terminal once and log in.",
+        "auth_error": "Claude Code is not logged in. Run fliprr login in a terminal.",
         "cli_error": "Couldn't start Claude Code. Details are on the screen.",
         "rate_limit": "Claude usage limit reached. Try again later.",
         "billing_error": "There is a billing problem with the Claude account.",
@@ -97,8 +97,8 @@ _PHRASES: dict[str, dict[str, str]] = {
         "accept_edits_on": "OK, I'll apply file edits without asking.",
         "accept_edits_off": "OK, I'll ask for permission.",
         "help": (
-            "Say “Claude Code” and a task and I'll pass it to Claude Code in your project. "
-            "Say “Claude” and a question to talk to Claude. "
+            "For a task in your project, say “Claude Code” and the task. "
+            "To just talk, say “Claude” and your question. "
             "After an answer you can go on without the name for a few seconds. "
             "Commands: stop, be quiet, repeat, new session, project and a name, "
             "open chat and a name, accept edits, sleep and wake up."

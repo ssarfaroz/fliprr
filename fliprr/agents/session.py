@@ -220,11 +220,17 @@ class ClaudeSession:
         self._text_blocks.clear()
         self.sink.on_turn_start(self, prompt)
         try:
-            await self._ensure_connected()
-            assert self._client is not None
-            await self._client.query(prompt)
-            async for message in self._client.receive_response():
-                self._handle(message)
+            try:
+                await self._query(prompt)
+            except ProcessError as e:
+                if "No conversation found" not in str(e) or not (self.session_id or self.spec.resume):
+                    raise
+                # The saved conversation is gone (history deleted?): start a new one.
+                self.log(f"{self.label}: previous conversation not found, starting a new one")
+                await self._disconnect()
+                self.spec = dataclasses.replace(self.spec, resume=None, continue_conversation=False)
+                self.session_id = None
+                await self._query(prompt)
         except CLINotFoundError as e:
             self.sink.on_error(self, "cli", str(e))
             await self._disconnect()
@@ -239,6 +245,13 @@ class ClaudeSession:
         finally:
             self.busy = False
             self.current_prompt = ""
+
+    async def _query(self, prompt: str) -> None:
+        await self._ensure_connected()
+        assert self._client is not None
+        await self._client.query(prompt)
+        async for message in self._client.receive_response():
+            self._handle(message)
 
     def _handle(self, message: Any) -> None:
         if isinstance(message, StreamEvent):

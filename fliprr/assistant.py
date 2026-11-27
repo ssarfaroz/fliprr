@@ -21,7 +21,7 @@ from fliprr.agents.session import TurnResult
 from fliprr.audio.segmenter import Utterance
 from fliprr.config import Config
 from fliprr.i18n import t
-from fliprr.speakable import SpeechChunker, to_speakable
+from fliprr.speakable import SpeechChunker
 from fliprr.stt.base import is_hallucination
 from fliprr.text import shorten, words
 from fliprr.wake import CHAT, CODE, WakeMatcher
@@ -85,6 +85,7 @@ class Assistant:
         self._turns: dict[str, _Turn] = {}
         self._last_answer: list[str] = []
         self._last_probe = 0.0
+        self._transcribing = False
         self._stopping = asyncio.Event()
         self._background: set[asyncio.Task] = set()
 
@@ -112,13 +113,19 @@ class Assistant:
         """Nothing running, nothing queued, nothing being said (used by simulations)."""
         return (
             self._utterances.empty()
+            and not self._transcribing
             and not self.speaker.speaking
             and not any(a.busy or a.queued for a in self.agents.values())
         )
 
     @property
     def waiting_for_answer(self) -> bool:
-        return self._confirm is not None and not self.speaker.speaking and self._utterances.empty()
+        return (
+            self._confirm is not None
+            and not self._transcribing
+            and not self.speaker.speaking
+            and self._utterances.empty()
+        )
 
     # -- main loop -------------------------------------------------------------------------
 
@@ -147,13 +154,15 @@ class Assistant:
             except asyncio.TimeoutError:
                 await self._maybe_probe()
                 continue
+            self._transcribing = True
             try:
                 transcript = await asyncio.to_thread(self.transcriber.transcribe, utterance.audio)
+                self.ui.debug(f"stt {transcript.seconds:.2f}s for {utterance.duration:.1f}s audio")
+                await self.on_transcript(transcript.text, started=utterance.started)
             except Exception as e:  # noqa: BLE001
                 self.ui.error(f"speech recognition failed: {e}")
-                continue
-            self.ui.debug(f"stt {transcript.seconds:.2f}s for {utterance.duration:.1f}s audio")
-            await self.on_transcript(transcript.text, started=utterance.started)
+            finally:
+                self._transcribing = False
 
     async def _maybe_probe(self) -> None:
         """While speaking, peek at the last seconds of audio for «Клод, стоп»."""
@@ -185,21 +194,23 @@ class Assistant:
         text = text.strip()
         if not text:
             return
+        now = self.clock()
+        wake = self.wake.match(text)
         if not typed:
             if is_hallucination(text, self.prompt):
                 self.ui.debug(f"ignored (noise): {text}")
                 return
-            if self.speaker.is_echo(text, started):
-                self.ui.debug(f"ignored (echo): {text}")
-                return
-        now = self.clock()
-        wake = self.wake.match(text)
-
-        if wake is None and self.speaker.speaking:
-            kind = it.find_barge_in(text, self.wake.claude_kind)
-            if kind:
-                await self._stop(self._barge_target(text), mute_only=kind == it.MUTE, announce=False)
-                return
+            if self.speaker.overlapped(started):
+                # The microphone also hears us. While we talk, only an explicit
+                # «Клод…» at the start of a phrase, or «…Клод, стоп…», counts.
+                ratio = self.speaker.echo_ratio(text)
+                kind = it.find_barge_in(text, self.wake.claude_kind)
+                if kind and ratio < 0.9:
+                    await self._stop(self._barge_target(text), mute_only=kind == it.MUTE, announce=False)
+                    return
+                if wake is None or wake.index > 0 or ratio >= 0.4:
+                    self.ui.debug(f"ignored (while speaking): {text}")
+                    return
 
         if self.paused:
             if wake and (intent := it.parse_intent(wake.command, wake.target)) and intent.kind == it.RESUME:
@@ -219,6 +230,7 @@ class Assistant:
                 self._listening_for = (wake.target, now + self.cfg.wake.listen_timeout_s)
                 self._followup = None
                 self.speaker.earcon("wake")
+                self.ui.state(("👂 слушаю → " if self.lang == "ru" else "👂 listening → ") + self.label(wake.target))
                 return
             await self.dispatch(wake.target, wake.command)
             return
@@ -304,16 +316,19 @@ class Assistant:
                 await self.submit(target, intent.rest)
         elif kind == it.NEW_SESSION:
             if target == CODE:
+                await self._abandon(code)
                 code.restart(resume=None, continue_conversation=False)
                 say(t(lang, "new_session"))
             else:
                 if self.chat_store is not None:
                     self.chat_store.reset_current()
+                await self._abandon(chat)
                 chat.restart(resume=None)
                 say(t(lang, "new_chat"))
             if intent.rest:
                 await self.submit(target, intent.rest)
         elif kind == it.CONTINUE_LAST:
+            await self._abandon(code)
             code.restart(resume=None, continue_conversation=True)
             say(t(lang, "continue_last"))
         elif kind == it.REPEAT:
@@ -324,6 +339,7 @@ class Assistant:
                 say(t(lang, "nothing_to_repeat"))
         elif kind == it.SWITCH_PROJECT:
             path = self.projects[intent.arg]
+            await self._abandon(code)
             code.restart(cwd=path, resume=None, continue_conversation=self.cfg.claude_code.continue_last)
             self.current_project = intent.arg
             say(t(lang, "project_switched", name=intent.arg))
@@ -387,8 +403,16 @@ class Assistant:
         if stopped and announce:
             self.speaker.say(t(self.lang, "stopped"))
 
+    async def _abandon(self, agent) -> None:  # noqa: ANN001
+        """Drop what the agent is doing before switching its session or folder."""
+        if self._confirm is not None and self._confirm.agent is agent:
+            self._resolve_confirm(it.NO)
+        agent.clear_queue()
+        await agent.interrupt()
+
     async def _open_chat(self, intent: it.Intent) -> None:
         chat = self.agents[CHAT]
+        await self._abandon(chat)
         store = self.chat_store
         name = intent.arg
         if store is not None:
@@ -544,8 +568,3 @@ class Assistant:
         task = asyncio.ensure_future(coro)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
-
-
-def speak_text(text: str) -> str:
-    """Public helper for one-off phrases (cli `say`)."""
-    return to_speakable(text)

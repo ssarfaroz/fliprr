@@ -17,6 +17,9 @@ from fliprr.audio.earcons import RATE as EARCON_RATE
 from fliprr.audio.earcons import earcon
 from fliprr.text import keys, overlap_ratio, script_of
 
+# Room reverb and output latency after the last sample was handed to the device.
+ECHO_TAIL_S = 0.35
+
 
 class Speaker:
     def __init__(
@@ -46,7 +49,8 @@ class Speaker:
         self._disabled_until: dict[int, float] = {}
         self._tasks: list[asyncio.Task] = []
         self.recent: deque[tuple[float, str]] = deque(maxlen=40)
-        self._played: deque[tuple[float, float]] = deque(maxlen=40)  # (start, end) of clips
+        self._played: deque[tuple[float, float]] = deque(maxlen=40)  # (start, end) of spoken clips
+        self._current_start: float | None = None
 
     # -- lifecycle -----------------------------------------------------------------
 
@@ -93,23 +97,29 @@ class Speaker:
                 self._done()
         self.player.stop()
 
-    def is_echo(self, text: str, started: float | None = None) -> bool:
-        """Did the microphone just hear our own voice?
+    def overlapped(self, started: float | None = None) -> bool:
+        """Was our voice (or its echo tail) in the air when an utterance began?
 
-        ``started`` is when the utterance began. Speech that began after we
-        had finished talking is the user's, even if it repeats our words
-        («Скажи “Клод, проснись”» → «Клод, проснись»).
+        Speech that began after we had finished talking is the user's, even
+        if it repeats our words («Скажи “Клод, проснись”» → «Клод, проснись»).
+        Earcons don't count: a beep doesn't turn into words.
         """
+        started = self.clock() if started is None else started
+        if self._current_start is not None and started >= self._current_start - 0.3:
+            return True
+        return any(s - 0.3 <= started <= e + ECHO_TAIL_S for s, e in self._played)
+
+    def echo_ratio(self, text: str) -> float:
+        """How much of ``text`` sounds like what we said in the last minute (0…1)."""
         now = self.clock()
-        started = now if started is None else started
-        overlapped = self.speaking or any(s - 0.3 <= started <= e + 0.8 for s, e in self._played)
-        if not overlapped:
-            return False
         recent = [t for ts, t in self.recent if now - ts < 60]
         if not recent or len(keys(text)) < 2:
-            return False
-        reference = set(keys(" ".join(recent)))
-        return overlap_ratio(text, reference) >= 0.6
+            return 0.0
+        return overlap_ratio(text, set(keys(" ".join(recent))))
+
+    def is_echo(self, text: str, started: float | None = None) -> bool:
+        """Did the microphone just hear our own voice?"""
+        return self.overlapped(started) and self.echo_ratio(text) >= 0.6
 
     # -- internals -----------------------------------------------------------------
 
@@ -147,11 +157,14 @@ class Speaker:
                     start = self.clock()
                     if text:
                         self.recent.append((start, text))
+                        self._current_start = start
                     await asyncio.to_thread(self.player.play, audio, rate)
-                    self._played.append((start, self.clock()))
+                    if text:
+                        self._played.append((start, self.clock()))
             except Exception as e:  # noqa: BLE001
                 self.log(f"playback failed: {e}")
             finally:
+                self._current_start = None
                 self._done()
 
     async def _synthesize(self, text: str) -> tuple[np.ndarray | None, int]:

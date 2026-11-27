@@ -23,7 +23,7 @@ class FakeEngine:
         if self.fail:
             raise RuntimeError("boom")
         self.texts.append(text)
-        return np.zeros(240, np.float32), 24000
+        return np.zeros(int(24000 * 0.06 * len(text)), np.float32), 24000  # ~speech length
 
 
 class FakeUI:

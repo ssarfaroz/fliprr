@@ -204,3 +204,31 @@ async def test_permission_answers():
             assert out.updated_permissions[0].destination == "session"  # never persisted to disk
         if answer is None:
             assert "did not answer" in out.message
+
+
+async def test_missing_saved_conversation_starts_fresh(fake_client, tmp_path):
+    from claude_agent_sdk import ProcessError
+
+    sink = Sink()
+    s = ClaudeSession("chat", "Claude", SessionSpec(cwd=tmp_path, resume="gone-123"),
+                      lambda spec, cb: {"resume": spec.resume}, sink)
+    calls = {"n": 0}
+
+    class FailingOnce(FakeClient):
+        async def receive_response(self):
+            calls["n"] += 1
+            if self.options["resume"] == "gone-123":
+                raise ProcessError("Claude Code returned an error result: No conversation found with session ID: gone-123")
+            yield result(session_id="fresh-1")
+
+    session_mod.ClaudeSDKClient = FailingOnce
+    s.start()
+    s.submit("привет")
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if any(e[0] == "result" for e in sink.events):
+            break
+    assert calls["n"] == 2
+    assert s.session_id == "fresh-1"
+    assert not any(e[0] == "error" for e in sink.events)
+    await s.close()
