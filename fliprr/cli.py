@@ -45,9 +45,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sound", action="store_true", help="play speech through the speakers")
     p.add_argument("--tts", action="store_true", help="synthesize speech without playing it (realistic timing)")
     p.add_argument("--project", default=argparse.SUPPRESS, help="folder for Claude Code")
+    p = sub.add_parser("setup", help="one-time setup: project folder, speech model, login, autostart")
+    p.add_argument("--project", default=argparse.SUPPRESS, help="folder for Claude Code (don't ask)")
+    p.add_argument("--yes", action="store_true", help="don't ask anything, use defaults")
+    p = sub.add_parser("autostart", help="start fliprr automatically at login: on | off | status")
+    p.add_argument("action", nargs="?", choices=["on", "off", "status"], default="status")
+    sub.add_parser("service", help="run in the background and restart if needed (used by autostart)")
     p = sub.add_parser("init", help="create a config file")
     p.add_argument("--path", help=f"where to write it (default: {app_dir() / 'config.toml'})")
     p.add_argument("--force", action="store_true", help="overwrite an existing file")
+    p.add_argument("--project", default=argparse.SUPPRESS, help="folder for Claude Code")
     sub.add_parser("doctor", help="check that everything is installed and working")
     sub.add_parser("login", help="sign in to Claude (same login as Claude Code)")
 
@@ -57,6 +64,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == "init":
         return cmd_init(args, ui)
+    if command == "setup":
+        from fliprr.setup_wizard import run_setup
+
+        try:
+            return run_setup(ui, project=args.project, assume_yes=args.yes)
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return 130
+    if command == "autostart":
+        return cmd_autostart(args, ui)
+    if command == "service":
+        return cmd_service(ui)
     try:
         cfg, path, warnings = load_config(args.config)
     except ConfigError as e:
@@ -108,17 +127,68 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def cmd_run(args: argparse.Namespace, cfg: Config, ui: Console, path: Path | None) -> int:
+    from fliprr import instance
     from fliprr.app import run_assistant
     from fliprr.audio.sources import MicrophoneSource
+    from fliprr.setup_wizard import lock_path
 
+    lock = instance.acquire(lock_path(cfg.data_path))
+    if lock is None:
+        ui.info("fliprr уже запущен (в другом окне)." if cfg.language == "ru" else "fliprr is already running.")
+        return 0
     if path is None:
-        ui.info("Настройки по умолчанию (создать файл настроек: fliprr init)" if cfg.language == "ru"
-                else "Using default settings (create a config file with: fliprr init)")
+        ui.info("Настройки по умолчанию (настроить: fliprr setup)" if cfg.language == "ru"
+                else "Using default settings (configure with: fliprr setup)")
     ui.info("Ctrl+C — выход" if cfg.language == "ru" else "Ctrl+C to quit")
-    asyncio.run(run_assistant(
-        cfg, ui, lambda _a: MicrophoneSource(cfg.audio.input_device, cfg.audio.input_gain),
-        keyboard=args.keyboard,
-    ))
+    try:
+        asyncio.run(run_assistant(
+            cfg, ui, lambda _a: MicrophoneSource(cfg.audio.input_device, cfg.audio.input_gain),
+            keyboard=args.keyboard,
+        ))
+    finally:
+        lock.close()
+    return 0
+
+
+def cmd_service(ui: Console) -> int:
+    """Keep `fliprr run` alive: restart it if it crashes or finds no microphone."""
+    import os
+    import subprocess
+
+    from fliprr import autostart
+
+    autostart.prepare_console()
+    os.chdir(Path.home())
+    ui.info("fliprr работает. Закрой это окно, чтобы выключить его до следующего входа в систему.")
+    while True:
+        started = time.monotonic()
+        try:
+            code = subprocess.call([sys.executable, "-m", "fliprr", "run"])
+        except KeyboardInterrupt:
+            return 0
+        if code == 0:
+            return 0
+        delay = 10 if time.monotonic() - started > 120 else 30
+        ui.warn(f"fliprr остановился (код {code}), перезапуск через {delay} с…")
+        try:
+            time.sleep(delay)
+        except KeyboardInterrupt:
+            return 0
+
+
+def cmd_autostart(args: argparse.Namespace, ui: Console) -> int:
+    from fliprr import autostart
+
+    try:
+        if args.action == "on":
+            ui.info(autostart.enable())
+        elif args.action == "off":
+            ui.info(autostart.disable())
+        else:
+            ui.info("Автозапуск включён." if autostart.is_enabled() else "Автозапуск выключен (включить: fliprr autostart on).")
+    except Exception as e:  # noqa: BLE001
+        ui.error(f"autostart: {e}")
+        return 1
     return 0
 
 
@@ -160,24 +230,15 @@ def cmd_devices(ui: Console) -> int:
 
 
 def cmd_say(args: argparse.Namespace, cfg: Config, ui: Console) -> int:
-    from fliprr.audio.player import AudioPlayer
-    from fliprr.speakable import to_speakable
-    from fliprr.tts import Speaker, make_engines
+    from fliprr.setup_wizard import speak_once
 
-    async def go() -> None:
-        engines = make_engines(cfg.tts, cfg.data_path, ui.warn)
-        if not engines:
-            ui.error("no TTS engine available")
-            return
-        speaker = Speaker(engines, AudioPlayer(cfg.audio.output_device), log=ui.warn)
-        speaker.start()
-        text = to_speakable(" ".join(args.text))
-        started = time.perf_counter()
-        await speaker.say_and_wait(text)
-        ui.info(f"[{engines[0].name}] {text} ({time.perf_counter() - started:.1f} s)")
-        await speaker.close()
-
-    asyncio.run(go())
+    started = time.perf_counter()
+    try:
+        speak_once(cfg, ui, " ".join(args.text))
+    except RuntimeError as e:
+        ui.error(str(e))
+        return 1
+    ui.info(f"({time.perf_counter() - started:.1f} s)")
     return 0
 
 
@@ -266,13 +327,15 @@ def cmd_test_mic(args: argparse.Namespace, cfg: Config, ui: Console) -> int:
 
 def cmd_init(args: argparse.Namespace, ui: Console) -> int:
     from fliprr.config_template import TEMPLATE
+    from fliprr.setup_wizard import toml_path
 
     path = Path(args.path).expanduser() if args.path else app_dir() / "config.toml"
     if path.exists() and not args.force:
         ui.error(f"{path} already exists (use --force to overwrite)")
         return 1
+    project = Path(args.project).expanduser().resolve() if getattr(args, "project", None) else Path.cwd()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(TEMPLATE.replace("{cwd}", str(Path.cwd()).replace("\\", "/")), encoding="utf-8")
+    path.write_text(TEMPLATE.replace("{cwd}", toml_path(project)), encoding="utf-8")
     ui.info(f"Создан файл настроек: {path}")
     return 0
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Install fliprr into ./.venv and link the `fliprr` command into ~/.local/bin.
+# One-time setup on macOS / Linux. Run from the fliprr folder: ./scripts/install.sh
+# Installs fliprr into ./.venv, links `fliprr` into ~/.local/bin, then `fliprr setup`
+# asks for your project folder, downloads the speech model, checks the Claude login,
+# turns on autostart and starts it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -7,7 +10,8 @@ PY="${PYTHON:-python3}"
 "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else "Python 3.10+ is required")'
 
 if [ "$(uname)" = "Linux" ] && ! ldconfig -p 2>/dev/null | grep -q libportaudio; then
-  echo "! PortAudio is missing. Install it first, e.g.: sudo apt install libportaudio2"
+  echo "! Нет PortAudio. Сначала установи: sudo apt install libportaudio2"
+  exit 1
 fi
 
 "$PY" -m venv .venv
@@ -17,13 +21,9 @@ fi
 mkdir -p "$HOME/.local/bin"
 ln -sf "$PWD/.venv/bin/fliprr" "$HOME/.local/bin/fliprr"
 
-echo
-echo "Готово. Дальше:"
-echo "  fliprr init     # файл настроек — впиши папку проекта"
-echo "  fliprr doctor   # проверка"
-echo "  fliprr test-mic # проверка микрофона издалека"
-echo "  fliprr          # запуск"
-case ":$PATH:" in
-  *":$HOME/.local/bin:"*) ;;
-  *) echo "(~/.local/bin нет в PATH — запускай $PWD/.venv/bin/fliprr)";;
-esac
+# setup asks questions: give it the terminal even if this script was piped
+if [ -t 0 ]; then
+  .venv/bin/python -m fliprr setup
+else
+  .venv/bin/python -m fliprr setup < /dev/tty
+fi

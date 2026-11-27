@@ -19,44 +19,49 @@
 5. Перед командами и правками файлов Claude Code **спрашивает разрешение голосом**: отвечаешь «да», «нет» или «да, и больше не спрашивай».
 6. Несколько секунд после ответа можно продолжать **без имени**: «а теперь закоммить».
 
-## Установка
+## Установка — один раз, одной командой
 
-Нужно: **Python 3.10+**, микрофон и колонки, **вход в аккаунт Claude**. Claude Code ставить отдельно не нужно — он идёт вместе с SDK. Если ты уже пользуешься Claude Code на этом компьютере, вход уже есть; если нет — `fliprr login` (`fliprr doctor` покажет, выполнен ли вход).
+Нужно: **Python 3.10+**, микрофон и колонки, аккаунт Claude. Claude Code ставить отдельно не нужно — он идёт вместе с SDK; если ты уже пользуешься Claude Code на этом компьютере, вход в аккаунт уже есть.
 
-**Windows** (PowerShell):
+**Windows** — в PowerShell:
 
 ```powershell
-git clone https://github.com/ssarfaroz/fliprr
-cd fliprr
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+git clone https://github.com/ssarfaroz/fliprr; cd fliprr; powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-Появится `fliprr.bat` — им и запускать (`fliprr.bat init`, `fliprr.bat`). Ключ `-Autostart` добавит запуск при входе в Windows.
-
-**macOS / Linux:**
+**macOS / Linux** (на Linux сначала `sudo apt install libportaudio2`):
 
 ```bash
-git clone https://github.com/ssarfaroz/fliprr
-cd fliprr
-./scripts/install.sh
+git clone https://github.com/ssarfaroz/fliprr && cd fliprr && ./scripts/install.sh
 ```
 
-На Linux сначала: `sudo apt install libportaudio2` (и `espeak-ng`, если нужен запасной офлайн-голос).
+Установщик всё сделает сам, задав пару вопросов:
 
-Офлайн-голоса Piper (без интернета): `.venv/bin/pip install -e ".[piper]"` и в настройках `[tts] engine = "piper"`.
+1. поставит нужные пакеты;
+2. спросит папку проекта, в которой будет работать Claude Code;
+3. скачает модель распознавания речи (~500 МБ, только в первый раз);
+4. проверит вход в Claude — если входа нет, предложит войти (откроется браузер);
+5. проверит микрофон и колонки и скажет тестовую фразу;
+6. включит автозапуск и запустит fliprr.
 
-## Первый запуск
+**После этого ничего запускать не нужно.** При каждом входе в систему fliprr стартует сам и слушает. На Windows это свёрнутое окно «fliprr» на панели задач: там видно, что он услышал и что ответил Claude; закроешь окно — fliprr выключится до следующего входа. Если он упадёт или микрофон ещё не подключён, он перезапустится сам.
 
-```bash
-fliprr init      # создаёт файл настроек; впиши папку проекта в [claude_code] cwd
-fliprr doctor    # проверяет микрофон, распознавание, голос, Claude Code
-fliprr test-mic  # отойди туда, откуда будешь говорить, и скажи «Клод Код, покажи статус гита»
-fliprr           # поехали
-```
+Нет Python на Windows: `winget install -e --id Python.Python.3.12`, затем закрой и снова открой PowerShell.
 
-При первом запуске скачается модель распознавания (~500 МБ для `small`). В консоли видно, что услышано, что ответил Claude и какие инструменты он запускал. Выход — `Ctrl+C`.
+## Управление
 
-`fliprr --keyboard` — дополнительно можно печатать запросы в консоль (удобно, когда сидишь за компьютером).
+На Windows команды запускаются из папки fliprr как `.\fliprr.bat <команда>`, на macOS/Linux — `fliprr <команда>`:
+
+| Команда | Что делает |
+|---|---|
+| `setup` | пройти настройку заново (сменить папку проекта и т. п.) |
+| `autostart off` · `autostart on` | выключить / включить автозапуск |
+| `test-mic` | проверить микрофон издалека: скажи «Клод Код, покажи статус гита» |
+| `doctor` | проверить всё разом |
+| `login` | войти в аккаунт Claude |
+| *(без команды)* `--keyboard` | запустить вручную; с `--keyboard` можно ещё и печатать запросы |
+
+Офлайн-голоса Piper (без интернета): `.venv/bin/pip install -e ".[piper]"` (Windows: `.venv\Scripts\pip install -e ".[piper]"`) и в настройках `[tts] engine = "piper"`.
 
 ## Что говорить
 
@@ -85,7 +90,7 @@ fliprr           # поехали
 
 ## Настройки
 
-Файл создаёт `fliprr init` (Windows: `%APPDATA%\fliprr\config.toml`, macOS: `~/Library/Application Support/fliprr/config.toml`, Linux: `~/.config/fliprr/config.toml`). Можно положить `fliprr.toml` в текущую папку или указать `--config`. В шаблоне всё прокомментировано; главное:
+Файл создаёт установщик (или `fliprr setup`) (Windows: `%APPDATA%\fliprr\config.toml`, macOS: `~/Library/Application Support/fliprr/config.toml`, Linux: `~/.config/fliprr/config.toml`). Можно положить `fliprr.toml` в текущую папку или указать `--config`. В шаблоне всё прокомментировано; главное:
 
 ```toml
 [claude_code]
@@ -125,11 +130,13 @@ followup_s = 8                     # 0 — выключить продолжен
 - Если ассистент реагирует на собственный голос — сделай колонки тише или поставь `[audio] barge_in = false` (тогда во время ответа он не слушает).
 - Если имя распознаётся по-своему — запусти `fliprr -v`, посмотри, что слышно, и добавь вариант в `[wake] extra_claude_words`.
 
-## Автозапуск
+## Как устроен автозапуск
 
-- **Windows:** `scripts\install.ps1 -Autostart` (ярлык в папке автозагрузки), или вручную: `Win+R` → `shell:startup` → ярлык на `fliprr.bat`.
-- **macOS:** Системные настройки → Основные → Объекты входа → добавить скрипт, который запускает `fliprr` в Терминале. Терминалу нужен доступ к микрофону (Конфиденциальность → Микрофон).
-- **Linux:** `scripts/fliprr.service` — инструкция внутри файла (`systemctl --user enable --now fliprr`).
+Его включает установщик (или `autostart on`), выключает `autostart off`. Запустить второй экземпляр нельзя: если fliprr уже работает, новый запуск просто завершится.
+
+- **Windows:** запись в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (без прав администратора) → окно «fliprr» стартует при входе и сворачивается.
+- **macOS:** объект входа `~/Applications/fliprr.command`, открывается в Терминале. Терминалу нужен доступ к микрофону: Системные настройки → Конфиденциальность → Микрофон.
+- **Linux:** пользовательская служба systemd (`~/.config/systemd/user/fliprr.service`), журнал — `journalctl --user -u fliprr -f`.
 
 ## Приватность
 
